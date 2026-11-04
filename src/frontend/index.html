@@ -1,0 +1,26 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Order Portal</title>
+<body style="font-family:sans-serif;max-width:640px;margin:2rem auto">
+<h2>Order Portal</h2>
+<p>Item <input id="item" value="book"> Qty <input id="qty" type="number" value="1" style="width:4rem">
+<button onclick="createOrder()">Place order</button>
+<button onclick="loadOrders()">Load orders</button></p>
+<pre id="out">Place an order, wait a few seconds, then press Load orders.</pre>
+<script>
+const out = document.getElementById("out");
+async function call(url, options) {
+  try {
+    const response = await fetch(url, options);
+    out.textContent = response.status + "\n" + JSON.stringify(await response.json(), null, 2);
+  } catch (error) { out.textContent = "Error: " + error; }
+}
+function createOrder() {
+  call("/api/orders", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({item: item.value, qty: Number(qty.value)})
+  });
+}
+function loadOrders() { call("/api/orders"); }
+</script>
