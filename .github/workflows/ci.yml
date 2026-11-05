@@ -1,22 +1,40 @@
 name: CI
+
 on:
   push:
     branches: [main]
   pull_request:
+
 permissions:
   contents: read
+
 jobs:
   synth:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+
+      - name: Check the token secret is set
+        env:
+          TOKEN: ${{ secrets.SIGMOID_CDK_TOKEN }}
+        run: test -n "$TOKEN" || { echo "SIGMOID_CDK_TOKEN is empty or missing"; exit 1; }
+
       - name: Allow pip to read the private sigmoid-cdk repo
-        run: git config --global url."https://x-access-token:${{ secrets.SIGMOID_CDK_TOKEN }}@github.com/".insteadOf "https://github.com/"
-      - run: pip install -r requirements.txt && npm install -g aws-cdk
-      - run: cdk synth --quiet
+        run: git config --global url."https://${{ secrets.SIGMOID_CDK_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Check the token can read the repo
+        run: git ls-remote https://github.com/prakashh63/sigmoid_cdk HEAD
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt && npm install -g aws-cdk
+
+      - name: Synthesize the stack
+        run: cdk synth --quiet
