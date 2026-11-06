@@ -1,0 +1,66 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: aws-stack
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: deploy
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt && npm install -g aws-cdk
+
+      - name: Sign in to AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-arn: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Find the stack name from bin/app.py
+        run: |
+          STACK_NAME=$(python -c "import runpy; print(runpy.run_path('bin/app.py')['app'].web_app_stack.stack_name)" | tail -n 1)
+          echo "STACK_NAME=$STACK_NAME" >> "$GITHUB_ENV"
+          echo "Stack: $STACK_NAME"
+
+      - name: Show what will change
+        run: cdk diff
+
+      - name: Deploy the stack
+        run: cdk deploy --require-approval never
+
+      - name: Upload the website
+        run: |
+          WEB_BUCKET=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+            --query "Stacks[0].Outputs[?OutputKey=='FrontendBucketName'].OutputValue" --output text)
+          aws s3 sync src/frontend "s3://$WEB_BUCKET" --delete
+          DISTRIBUTION_ID=$(aws cloudformation list-stack-resources --stack-name "$STACK_NAME" \
+            --query "StackResourceSummaries[?ResourceType=='AWS::CloudFront::Distribution'].PhysicalResourceId" --output text)
+          aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/*"
+
+      - name: Show the site address
+        run: |
+          SITE_URL=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+            --query "Stacks[0].Outputs[?OutputKey=='SiteUrl'].OutputValue" --output text)
+          echo "Site: $SITE_URL" | tee -a "$GITHUB_STEP_SUMMARY"

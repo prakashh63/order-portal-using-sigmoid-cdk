@@ -19,6 +19,7 @@ app = SigmoidApp(
         cost_center="cc-100",
         frontend_bucket=S3Config(bucket_name=f"order-portal-web-{stage}-demo"),
         extra_buckets=[S3Config(bucket_name=f"order-portal-data-{stage}-demo")],
+        
         lambdas=[
             LambdaConfig(
                 function_name="create-order",
@@ -27,6 +28,7 @@ app = SigmoidApp(
                 timeout_seconds=10,
                 send_to_queues=["order-events"],
             ),
+            
             LambdaConfig(
                 function_name="list-orders",
                 entry_point_dir="src/lambdas/list_orders",

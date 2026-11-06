@@ -1,0 +1,73 @@
+name: Destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "destroy" to delete the stack'
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: aws-stack
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+    environment: destroy
+    steps:
+      - name: Check the confirmation word
+        run: test "${{ inputs.confirm }}" = "destroy" || { echo "Type exactly: destroy"; exit 1; }
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt && npm install -g aws-cdk
+
+      - name: Sign in to AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-arn: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Find the stack name from bin/app.py
+        run: |
+          STACK_NAME=$(python -c "import runpy; print(runpy.run_path('bin/app.py')['app'].web_app_stack.stack_name)" | tail -n 1)
+          echo "STACK_NAME=$STACK_NAME" >> "$GITHUB_ENV"
+          echo "Stack: $STACK_NAME"
+
+      - name: Refuse to destroy prod
+        run: |
+          case "$STACK_NAME" in
+            *-prod) echo "prod is protected; destroy it by hand if you really mean it"; exit 1 ;;
+          esac
+
+      - name: Empty the buckets
+        run: |
+          if ! aws cloudformation describe-stacks --stack-name "$STACK_NAME" > /dev/null 2>&1; then
+            echo "Stack $STACK_NAME does not exist, nothing to empty"
+            exit 0
+          fi
+          for BUCKET in $(aws cloudformation list-stack-resources --stack-name "$STACK_NAME" \
+            --query "StackResourceSummaries[?ResourceType=='AWS::S3::Bucket'].PhysicalResourceId" --output text); do
+            echo "Emptying $BUCKET"
+            aws s3 rm "s3://$BUCKET" --recursive
+          done
+
+      - name: Destroy the stack
+        run: cdk destroy --force
