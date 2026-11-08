@@ -2,22 +2,27 @@ name: Deploy
 
 on:
   workflow_dispatch:
+    inputs:
+      stage:
+        description: Stage to deploy
+        type: choice
+        options: [dev, staging, prod]
+        required: true
 
 permissions:
-  id-token: write
   contents: read
 
 concurrency:
-  group: aws-stack
+  group: infra-${{ inputs.stage }}
   cancel-in-progress: false
-
-env:
-  AWS_REGION: ap-south-1
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: deploy
+    environment: ${{ inputs.stage }}
+    env:
+      STAGE: ${{ inputs.stage }}
+      AWS_REGION: ap-southeast-2
     steps:
       - uses: actions/checkout@v4
 
@@ -32,35 +37,32 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt && npm install -g aws-cdk
 
-      - name: Sign in to AWS
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-arn: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-southeast-2
 
-      - name: Find the stack name from bin/app.py
-        run: |
-          STACK_NAME=$(python -c "import runpy; print(runpy.run_path('bin/app.py')['app'].web_app_stack.stack_name)" | tail -n 1)
-          echo "STACK_NAME=$STACK_NAME" >> "$GITHUB_ENV"
-          echo "Stack: $STACK_NAME"
-
-      - name: Show what will change
+      - name: Diff
         run: cdk diff
 
-      - name: Deploy the stack
-        run: cdk deploy --require-approval never
+      - name: Deploy infrastructure
+        run: cdk deploy --all --require-approval never
 
-      - name: Upload the website
-        run: |
-          WEB_BUCKET=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
-            --query "Stacks[0].Outputs[?OutputKey=='FrontendBucketName'].OutputValue" --output text)
-          aws s3 sync src/frontend "s3://$WEB_BUCKET" --delete
-          DISTRIBUTION_ID=$(aws cloudformation list-stack-resources --stack-name "$STACK_NAME" \
-            --query "StackResourceSummaries[?ResourceType=='AWS::CloudFront::Distribution'].PhysicalResourceId" --output text)
-          aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/*"
+      - name: Upload frontend
+        run: aws s3 sync src/frontend s3://order-portal-web-${STAGE}-demo --delete
 
-      - name: Show the site address
+      - name: Invalidate CloudFront cache
         run: |
-          SITE_URL=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
-            --query "Stacks[0].Outputs[?OutputKey=='SiteUrl'].OutputValue" --output text)
-          echo "Site: $SITE_URL" | tee -a "$GITHUB_STEP_SUMMARY"
+          DIST_ID=$(aws cloudformation describe-stack-resources \
+            --stack-name sigmoid-order-portal-${STAGE} \
+            --query "StackResources[?ResourceType=='AWS::CloudFront::Distribution'].PhysicalResourceId" \
+            --output text)
+          aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*"
+
+      - name: Show site URL
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name sigmoid-order-portal-${STAGE} \
+            --query "Stacks[0].Outputs[?OutputKey=='SiteUrl'].OutputValue" \
+            --output text
