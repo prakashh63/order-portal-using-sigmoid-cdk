@@ -19,7 +19,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: ${{ inputs.stage }}
+    environment: cdk-pipeline
     env:
       STAGE: ${{ inputs.stage }}
       AWS_REGION: ap-southeast-2
